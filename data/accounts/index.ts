@@ -19,10 +19,20 @@ import { milliporeSigma } from "./milliporesigma";
 import { philips } from "./philips";
 import { adiSnapone } from "./adi-snapone";
 import { galls } from "./galls";
+import { honeywell } from "./honeywell";
+import { masimo } from "./masimo";
+import { standardTextile } from "./standard-textile";
+import { millerKnoll } from "./millerknoll";
+import { airgas } from "./airgas";
+import { hdSupply } from "./hd-supply";
+import { crLaurence } from "./cr-laurence";
+import { terumo } from "./terumo";
+import { bioRad } from "./bio-rad";
+import { mckesson } from "./mckesson";
 
 /**
  * The seed registry of fully-worked accounts.
  * For B2B Connect 2026 this grows to the 62 attendees; ChemPoint is account #1.
  * Adding an account = add a file here (or a Supabase row) — never a code change elsewhere.
  */
-export const SEED_ACCOUNTS: AccountConfig[] = [chempoint, americanTextile, bobBarker, mdBuildingProducts, cpskin, msc, mouser, hoffmaster, sumitomo, conceptGroup, idt, thermoFisher, stihl, schneider, lg, bunzlCanada, milliporeSigma, philips, adiSnapone, galls];
+export const SEED_ACCOUNTS: AccountConfig[] = [chempoint, americanTextile, bobBarker, mdBuildingProducts, cpskin, msc, mouser, hoffmaster, sumitomo, conceptGroup, idt, thermoFisher, stihl, schneider, lg, bunzlCanada, milliporeSigma, philips, adiSnapone, galls, honeywell, masimo, standardTextile, millerKnoll, airgas, hdSupply, crLaurence, terumo, bioRad, mckesson];
