@@ -4,6 +4,11 @@ import "server-only";
  * HubSpot CRM v3 upsert on email capture (spec §11.7).
  * Server-side only — Private App token never ships to the client.
  * No-ops gracefully (returns null) when unconfigured so the gate still works locally.
+ *
+ * Mapping policy: contacts carry ONLY default HubSpot properties (no custom b2bconnect_*).
+ * The full report context lands as a timeline Note on the contact, so nothing is lost and
+ * no custom properties have to be created. The note write needs the Private App scope
+ * `crm.objects.notes.write` (in addition to crm.objects.contacts read/write).
  */
 export interface LeadPayload {
   email: string;
@@ -19,6 +24,75 @@ export interface LeadPayload {
 }
 
 const BASE = "https://api.hubapi.com";
+// HubSpot-defined association type: Note → Contact.
+const NOTE_TO_CONTACT_TYPE_ID = 202;
+
+type Headers = { Authorization: string; "Content-Type": string };
+
+/** Upsert a contact by email (PATCH idProperty=email, create on 404). Returns the id. */
+async function upsertContactByEmail(
+  email: string,
+  properties: Record<string, string>,
+  headers: Headers
+): Promise<string | undefined> {
+  const res = await fetch(
+    `${BASE}/crm/v3/objects/contacts/${encodeURIComponent(email)}?idProperty=email`,
+    { method: "PATCH", headers, body: JSON.stringify({ properties }) }
+  );
+  if (res.status === 404) {
+    const created = await fetch(`${BASE}/crm/v3/objects/contacts`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ properties }),
+    });
+    if (!created.ok) throw new Error(`HubSpot create failed: ${created.status}`);
+    return (await created.json())?.id;
+  }
+  if (res.ok) return (await res.json())?.id;
+  throw new Error(`HubSpot upsert failed: ${res.status}`);
+}
+
+/**
+ * Attach a Note to a contact's timeline. Best-effort: a failure here (e.g. the
+ * notes scope is missing) is logged and swallowed so it never blocks lead capture.
+ * `lines` are rendered as an HTML body since hs_note_body is rich text.
+ */
+async function createContactNote(
+  contactId: string,
+  title: string,
+  lines: Array<[string, string]>,
+  headers: Headers
+): Promise<void> {
+  const body =
+    `<strong>${title}</strong><br>` +
+    lines
+      .filter(([, v]) => v && v.length > 0)
+      .map(([k, v]) => `${k}: ${v}`)
+      .join("<br>");
+  try {
+    const res = await fetch(`${BASE}/crm/v3/objects/notes`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        properties: { hs_timestamp: new Date().toISOString(), hs_note_body: body },
+        associations: [
+          {
+            to: { id: contactId },
+            types: [
+              {
+                associationCategory: "HUBSPOT_DEFINED",
+                associationTypeId: NOTE_TO_CONTACT_TYPE_ID,
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    if (!res.ok) throw new Error(`HubSpot note failed: ${res.status}`);
+  } catch (err) {
+    console.error("[hubspot] note error:", err);
+  }
+}
 
 export async function upsertHubSpotContact(
   lead: LeadPayload
@@ -26,47 +100,44 @@ export async function upsertHubSpotContact(
   const token = process.env.HUBSPOT_PRIVATE_APP_TOKEN;
   if (!token) return null;
 
-  const headers = {
+  const headers: Headers = {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
   };
 
-  // Upsert Contact by email (idProperty=email). Custom b2bconnect_* props per spec §11.7.
+  // Standard contact properties only — no custom props required.
   const properties: Record<string, string> = {
     email: lead.email,
     jobtitle: lead.role,
-    b2bconnect_vertical: lead.vertical,
-    b2bconnect_revenue_band: lead.revenueBand,
-    b2bconnect_role: lead.role,
-    b2bconnect_active_requirement: String(lead.activeRequirement),
-    b2bconnect_plays: lead.playsShown.join(", "),
-    b2bconnect_source: lead.source,
-    ...Object.fromEntries(Object.entries(lead.utm ?? {}).map(([k, v]) => [`utm_${k}`, v])),
+    company: lead.companyName,
   };
 
   try {
-    const res = await fetch(
-      `${BASE}/crm/v3/objects/contacts/${encodeURIComponent(lead.email)}?idProperty=email`,
-      { method: "PATCH", headers, body: JSON.stringify({ properties }) }
+    const contactId = await upsertContactByEmail(lead.email, properties, headers);
+    if (!contactId) return null;
+
+    // Full report context goes to the contact timeline as a Note.
+    const utm = Object.entries(lead.utm ?? {})
+      .map(([k, v]) => `${k}=${v}`)
+      .join("; ");
+    await createContactNote(
+      contactId,
+      "B2B Connect 2026 — report unlocked",
+      [
+        ["Company", lead.companyName],
+        ["Vertical", lead.vertical],
+        ["Revenue band", lead.revenueBand],
+        ["Role", lead.role],
+        ["Active requirement", lead.activeRequirement ? "Yes" : "No"],
+        ["Wedge", lead.wedge],
+        ["Plays shown", lead.playsShown.join(", ")],
+        ["Source", lead.source],
+        ["UTM", utm],
+      ],
+      headers
     );
 
-    let contactId: string | undefined;
-    if (res.status === 404) {
-      // Not found → create.
-      const created = await fetch(`${BASE}/crm/v3/objects/contacts`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ properties }),
-      });
-      if (!created.ok) throw new Error(`HubSpot create failed: ${created.status}`);
-      contactId = (await created.json())?.id;
-    } else if (res.ok) {
-      contactId = (await res.json())?.id;
-    } else {
-      throw new Error(`HubSpot upsert failed: ${res.status}`);
-    }
-
-    return contactId ? { contactId } : null;
+    return { contactId };
   } catch (err) {
     // Never block the lead capture on a CRM error — log and continue.
     console.error("[hubspot] upsert error:", err);
@@ -85,7 +156,7 @@ export interface ContactRequestPayload {
 
 /**
  * Upsert a contact for a "company we don't have a profile for yet" capture.
- * Mirrors upsertHubSpotContact but carries the inbound request fields.
+ * Mirrors upsertHubSpotContact: standard contact props + a timeline Note for the rest.
  */
 export async function submitHubSpotContactRequest(
   req: ContactRequestPayload
@@ -93,7 +164,7 @@ export async function submitHubSpotContactRequest(
   const token = process.env.HUBSPOT_PRIVATE_APP_TOKEN;
   if (!token) return null;
 
-  const headers = {
+  const headers: Headers = {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
   };
@@ -105,30 +176,25 @@ export async function submitHubSpotContactRequest(
     lastname: rest.join(" "),
     company: req.company,
     jobtitle: req.role ?? "",
-    b2bconnect_source: req.source,
-    b2bconnect_message: req.message ?? "",
   };
 
   try {
-    const res = await fetch(
-      `${BASE}/crm/v3/objects/contacts/${encodeURIComponent(req.email)}?idProperty=email`,
-      { method: "PATCH", headers, body: JSON.stringify({ properties }) }
+    const contactId = await upsertContactByEmail(req.email, properties, headers);
+    if (!contactId) return null;
+
+    await createContactNote(
+      contactId,
+      "B2B Connect 2026 — contact request",
+      [
+        ["Company", req.company],
+        ["Role", req.role ?? ""],
+        ["Message", req.message ?? ""],
+        ["Source", req.source],
+      ],
+      headers
     );
-    let contactId: string | undefined;
-    if (res.status === 404) {
-      const created = await fetch(`${BASE}/crm/v3/objects/contacts`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ properties }),
-      });
-      if (!created.ok) throw new Error(`HubSpot create failed: ${created.status}`);
-      contactId = (await created.json())?.id;
-    } else if (res.ok) {
-      contactId = (await res.json())?.id;
-    } else {
-      throw new Error(`HubSpot upsert failed: ${res.status}`);
-    }
-    return contactId ? { contactId } : null;
+
+    return { contactId };
   } catch (err) {
     console.error("[hubspot] contact-request error:", err);
     return null;
