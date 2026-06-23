@@ -1,0 +1,95 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Dark navy brand theme — default (spec §9.1). HSL channels for ShadCN tokens. */
+    --background: 222 74% 15%; /* deep navy #0A1A40 */
+    --foreground: 0 0% 100%; /* white */
+
+    --card: 222 64% 19%; /* navy #11244F */
+    --card-foreground: 0 0% 100%;
+
+    --popover: 221 64% 22%; /* #14315F */
+    --popover-foreground: 0 0% 100%;
+
+    --primary: 3 79% 50%; /* the "Unified." red #E1251B */
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 222 59% 42%; /* blue #2C50A8 */
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 221 50% 24%;
+    --muted-foreground: 222 30% 75%; /* slate #AEB8D0 */
+
+    --accent: 183 61% 48%; /* teal #2FBFC6 — the "compounding" highlight */
+    --accent-foreground: 222 74% 12%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 222 51% 28%; /* hairline #22356B */
+    --input: 222 51% 28%;
+    --ring: 183 61% 48%;
+
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    /* subtle dot-grid motif over flat navy (spec §9.3) */
+    background-image: radial-gradient(
+      hsl(var(--border) / 0.45) 1px,
+      transparent 1px
+    );
+    background-size: 22px 22px;
+    background-attachment: fixed;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  /* prevent iOS input zoom — body/input text >= 16px (spec §11.2) */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  /* blur→reveal gate transition target (spec §11.6) */
+  .gate-blur {
+    filter: blur(10px);
+    user-select: none;
+    pointer-events: none;
+  }
+  .glow-teal {
+    box-shadow: 0 0 0 1px hsl(var(--accent) / 0.4),
+      0 8px 30px -8px hsl(var(--accent) / 0.35);
+  }
+  .glow-red {
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.4),
+      0 8px 30px -8px hsl(var(--primary) / 0.45);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
